@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"fmt"
 	"net"
+	"strings"
 	"syscall"
 
 	"github.com/utkarsh5026/net/pkg/commons"
@@ -82,6 +83,11 @@ func (i *Interface) MACAddress() commons.MACAddress {
 	return i.macAddr
 }
 
+// Index returns the index of the network interface.
+func (i *Interface) Index() int {
+	return i.index
+}
+
 // ReadFrame reads a single Ethernet frame from the network interface.
 // It returns the parsed Frame or an error if reading or parsing fails.
 func (i *Interface) ReadFrame() (*Frame, error) {
@@ -112,7 +118,7 @@ func (i *Interface) WriteFrame(frame *Frame) error {
 	addr := &unix.SockaddrLinklayer{
 		Ifindex:  i.index,
 		Protocol: htons(uint16(frame.EtherType)),
-		Halen:    6,
+		Halen:    commons.MACLength,
 	}
 
 	copy(addr.Addr[:], frame.Destination[:])
@@ -158,7 +164,7 @@ func GetInterfaceInfo(ifname string) (string, error) {
 		return "", fmt.Errorf("failed to get interface %s: %w", ifname, err)
 	}
 
-	var buffer bytes.Buffer
+	var buffer strings.Builder
 	buffer.WriteString(fmt.Sprintf("Name: %s\n", iface.Name))
 	buffer.WriteString(fmt.Sprintf("Index: %d\n", iface.Index))
 	buffer.WriteString(fmt.Sprintf("MTU: %d\n", iface.MTU))
