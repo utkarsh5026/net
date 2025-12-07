@@ -7,13 +7,24 @@ import (
 )
 
 const (
+	// IPv6Length defines the number of bytes in an IPv6 address (128 bits).
 	IPv6Length = 16
+
+	// IPv4Length defines the number of bytes in an IPv4 address (32 bits).
 	IPv4Length = 4
-	MACLength  = 6
+
+	// MACLength defines the number of bytes in a MAC address (48 bits).
+	MACLength = 6
 )
 
 var (
+	// BroadCastMAC represents the Ethernet broadcast MAC address (FF:FF:FF:FF:FF:FF).
+	// It is used to send packets to all devices on the local network segment.
 	BroadCastMAC = MACAddress{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
+
+	// UnknownMAC represents an uninitialized or unknown MAC address (all bytes set to 0).
+	// This can be used as a placeholder when the actual MAC address is not known.
+	UnknownMAC = MACAddress{}
 )
 
 // MACAddress represents a MAC (Media Access Control) address.
