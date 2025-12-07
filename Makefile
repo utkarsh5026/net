@@ -1,7 +1,7 @@
 # Makefile for Go Network Protocol Implementation
 # Module: github.com/utkarsh5026/net
 
-.PHONY: help all build test test-verbose test-coverage clean fmt fmt-check vet lint modernize tidy deps bench install-tools examples run-capture
+.PHONY: help all build test test-verbose test-coverage clean fmt fmt-check vet lint modernize tidy deps bench install-tools examples run-capture run-arp run-arp-demo
 
 # Default target
 .DEFAULT_GOAL := help
@@ -23,7 +23,7 @@ COVERAGE_DIR=coverage
 
 # Binary output
 BINARY_DIR=bin
-EXAMPLE_BINARIES=$(BINARY_DIR)/capture
+EXAMPLE_BINARIES=$(BINARY_DIR)/capture $(BINARY_DIR)/arp-visualizer
 
 # Colors for output
 COLOR_RESET=\033[0m
@@ -100,6 +100,7 @@ build: ## Build all example binaries
 	@echo "$(COLOR_GREEN)Building examples...$(COLOR_RESET)"
 	@mkdir -p $(BINARY_DIR)
 	@$(GOBUILD) -o $(BINARY_DIR)/capture ./examples/capture
+	@$(GOBUILD) -o $(BINARY_DIR)/arp-visualizer ./examples/arp
 
 build-all: build ## Build all binaries (alias for build)
 
@@ -111,6 +112,36 @@ run-capture: build ## Run the packet capture example (requires sudo). Use ARGS f
 	@echo "$(COLOR_GREEN)Running capture example...$(COLOR_RESET)"
 	@echo "$(COLOR_YELLOW)Note: This requires root privileges$(COLOR_RESET)"
 	@sudo $(BINARY_DIR)/capture $(ARGS)
+
+run-arp: build ## Run the ARP network scanner (requires sudo). Usage: make run-arp IFACE=eth0
+	@echo "$(COLOR_GREEN)Running ARP Network Scanner...$(COLOR_RESET)"
+	@echo "$(COLOR_YELLOW)Note: This requires root privileges$(COLOR_RESET)"
+	@if [ -z "$(IFACE)" ]; then \
+		echo "$(COLOR_YELLOW)Usage: make run-arp IFACE=<interface>$(COLOR_RESET)"; \
+		echo "$(COLOR_YELLOW)Example: make run-arp IFACE=eth0$(COLOR_RESET)"; \
+		echo ""; \
+		echo "The scanner will automatically detect your IP and subnet from the interface."; \
+		echo ""; \
+		echo "Find your network interfaces with:"; \
+		echo "  - List interfaces: ip addr show"; \
+		echo "  - Brief list: ip -brief addr show"; \
+		exit 1; \
+	fi
+	@sudo $(BINARY_DIR)/arp-visualizer $(IFACE)
+
+run-arp-demo: build ## Run ARP scanner demo (interactive - will prompt for network interface)
+	@echo "$(COLOR_GREEN)ARP Network Scanner - Interactive Setup$(COLOR_RESET)"
+	@echo ""
+	@echo "$(COLOR_BOLD)Find your network interface:$(COLOR_RESET)"
+	@echo "Available interfaces:"
+	@ip -brief addr show | grep -v "lo" || true
+	@echo ""
+	@read -p "Enter interface name (e.g., eth0, wlan0): " iface; \
+	echo ""; \
+	echo "$(COLOR_GREEN)Starting ARP Network Scanner...$(COLOR_RESET)"; \
+	echo "$(COLOR_YELLOW)Auto-detecting IP and subnet from $$iface...$(COLOR_RESET)"; \
+	echo ""; \
+	sudo $(BINARY_DIR)/arp-visualizer $$iface
 
 install: ## Install binaries to GOPATH/bin
 	@echo "$(COLOR_GREEN)Installing binaries...$(COLOR_RESET)"
