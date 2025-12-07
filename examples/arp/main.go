@@ -27,6 +27,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/utkarsh5026/net/pkg/arp"
 	"github.com/utkarsh5026/net/pkg/commons"
 	"github.com/utkarsh5026/net/pkg/ethernet"
@@ -39,6 +41,87 @@ type scannedDevice struct {
 	IP, MAC, Vendor string
 }
 
+// Styles for the TUI
+var (
+	// Color palette
+	primaryColor   = lipgloss.Color("#00D9FF")
+	secondaryColor = lipgloss.Color("#7C3AED")
+	successColor   = lipgloss.Color("#10B981")
+	warningColor   = lipgloss.Color("#F59E0B")
+	errorColor     = lipgloss.Color("#EF4444")
+	textColor      = lipgloss.Color("#E5E7EB")
+	mutedColor     = lipgloss.Color("#9CA3AF")
+	bgColor        = lipgloss.Color("#1F2937")
+
+	// Title styles
+	titleStyle = lipgloss.NewStyle().
+			Foreground(primaryColor).
+			Bold(true).
+			Padding(0, 1).
+			MarginTop(1).
+			MarginBottom(1)
+
+	headerStyle = lipgloss.NewStyle().
+			Foreground(textColor).
+			Background(secondaryColor).
+			Padding(0, 2).
+			Bold(true)
+
+	// Info box styles
+	infoBoxStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(primaryColor).
+			Padding(1, 2).
+			MarginBottom(1)
+
+	infoLabelStyle = lipgloss.NewStyle().
+			Foreground(mutedColor).
+			Width(12)
+
+	infoValueStyle = lipgloss.NewStyle().
+			Foreground(primaryColor).
+			Bold(true)
+
+	// Progress styles
+	progressBarStyle = lipgloss.NewStyle().
+				Foreground(successColor)
+
+	progressTextStyle = lipgloss.NewStyle().
+				Foreground(textColor).
+				Bold(true)
+
+	// Table styles
+	tableHeaderStyle = lipgloss.NewStyle().
+				Foreground(bgColor).
+				Background(primaryColor).
+				Bold(true).
+				Padding(0, 1)
+
+	tableCellStyle = lipgloss.NewStyle().
+			Foreground(textColor).
+			Padding(0, 1)
+
+	tableRowAltStyle = lipgloss.NewStyle().
+				Background(lipgloss.Color("#374151")).
+				Foreground(textColor).
+				Padding(0, 1)
+
+	// Status styles
+	statusScanningStyle = lipgloss.NewStyle().
+				Foreground(warningColor).
+				Bold(true)
+
+	statusCompleteStyle = lipgloss.NewStyle().
+				Foreground(successColor).
+				Bold(true)
+
+	// Footer styles
+	footerStyle = lipgloss.NewStyle().
+			Foreground(mutedColor).
+			MarginTop(1).
+			Italic(true)
+)
+
 // scanner manages the ARP scanning process and coordinates concurrent
 // scanning of multiple IP addresses. It maintains statistics about the
 // scan progress and collects information about discovered devices.
@@ -48,14 +131,33 @@ type scanner struct {
 	total   int
 	mu      sync.Mutex
 	devices map[string]scannedDevice
+	prog    *tea.Program // Add reference to tea program for updates
 }
 
 // newScanner creates and initializes a new scanner instance with the given ARP handler.
-func newScanner(handler *arp.Handler) *scanner {
+func newScanner(handler *arp.Handler, prog *tea.Program) *scanner {
 	return &scanner{
 		handler: handler,
 		devices: make(map[string]scannedDevice),
+		prog:    prog,
 	}
+}
+
+// scanProgressMsg is sent when scan progress updates
+type scanProgressMsg struct {
+	scanned int64
+	found   int
+}
+
+// scanCompleteMsg is sent when scanning completes
+type scanCompleteMsg struct {
+	devices  []scannedDevice
+	duration time.Duration
+}
+
+// deviceFoundMsg is sent when a new device is discovered
+type deviceFoundMsg struct {
+	device scannedDevice
 }
 
 // generateIPAddresses generates a list of all valid host IP addresses within the given subnet.
@@ -82,13 +184,12 @@ func (s *scanner) generateIPAddresses(subnet string) ([]commons.IPv4Address, err
 }
 
 // scan performs a concurrent ARP scan of all valid IPs in the specified subnet.
-func (s *scanner) scan(ctx context.Context, subnet string) ([]scannedDevice, error) {
+func (s *scanner) scan(ctx context.Context, subnet string, startTime time.Time) error {
 	ips, err := s.generateIPAddresses(subnet)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	s.total = len(ips)
-	fmt.Printf("Scanning %d IPs in subnet %s...\n\n", s.total, subnet)
 
 	done := make(chan struct{})
 	go s.reportProgress(done)
@@ -109,7 +210,10 @@ func (s *scanner) scan(ctx context.Context, subnet string) ([]scannedDevice, err
 				default:
 					mac, err := s.handler.Resolve(ip)
 					if err == nil {
-						s.addDevice(ip, mac)
+						dev := s.addDevice(ip, mac)
+						if s.prog != nil {
+							s.prog.Send(deviceFoundMsg{device: dev})
+						}
 					}
 					atomic.AddInt64(&s.scanned, 1)
 				}
@@ -131,20 +235,30 @@ func (s *scanner) scan(ctx context.Context, subnet string) ([]scannedDevice, err
 	wg.Wait()
 	close(done)
 
-	return s.getSortedDevices(), nil
+	if s.prog != nil {
+		duration := time.Since(startTime)
+		s.prog.Send(scanCompleteMsg{
+			devices:  s.getSortedDevices(),
+			duration: duration,
+		})
+	}
+
+	return nil
 }
 
 // addDevice safely adds a discovered device to the scanner's device map.
-func (s *scanner) addDevice(ip commons.IPv4Address, mac commons.MACAddress) {
+func (s *scanner) addDevice(ip commons.IPv4Address, mac commons.MACAddress) scannedDevice {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	ipStr := ip.String()
-	s.devices[ipStr] = scannedDevice{
+	dev := scannedDevice{
 		IP:     ipStr,
 		MAC:    mac.String(),
 		Vendor: commons.GetVendor(mac),
 	}
+	s.devices[ipStr] = dev
+	return dev
 }
 
 // getSortedDevices returns all discovered devices sorted by IP address.
@@ -165,10 +279,10 @@ func (s *scanner) getSortedDevices() []scannedDevice {
 	return devices
 }
 
-// reportProgress continuously prints scan progress updates to stdout.
-// It updates every 500ms showing the number of IPs scanned and devices found.
+// reportProgress continuously sends scan progress updates to the TUI.
+// It updates every 200ms showing the number of IPs scanned and devices found.
 func (s *scanner) reportProgress(done chan struct{}) {
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
@@ -180,7 +294,9 @@ func (s *scanner) reportProgress(done chan struct{}) {
 			s.mu.Lock()
 			found := len(s.devices)
 			s.mu.Unlock()
-			fmt.Printf("\rProgress: %d/%d IPs scanned, %d devices found", scanned, s.total, found)
+			if s.prog != nil {
+				s.prog.Send(scanProgressMsg{scanned: scanned, found: found})
+			}
 		}
 	}
 }
@@ -244,31 +360,194 @@ func getInterfaceIPv4AndSubnet(ifaceName string) (commons.IPv4Address, string, e
 	return commons.IPv4Address{}, "", fmt.Errorf("no IPv4 address found on interface %s", ifaceName)
 }
 
-// printResults displays a formatted summary of the scan results.
-func printResults(devices []scannedDevice, duration time.Duration) {
-	fmt.Printf("\n\n")
-	fmt.Printf("========================================\n")
-	fmt.Printf("         SCAN COMPLETE\n")
-	fmt.Printf("========================================\n")
-	fmt.Printf("Duration: %v\n", duration.Round(time.Millisecond))
-	fmt.Printf("Devices Found: %d\n\n", len(devices))
+// Model represents the Bubble Tea model for the TUI
+type model struct {
+	ifaceName string
+	localIP   string
+	subnet    string
+	totalIPs  int
+	scanned   int64
+	found     int
+	devices   []scannedDevice
+	scanning  bool
+	complete  bool
+	duration  time.Duration
+	width     int
+	height    int
+}
 
-	if len(devices) == 0 {
-		fmt.Printf("No devices found on the network.\n")
-		return
+func (m model) Init() tea.Cmd {
+	return nil
+}
+
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		return m, nil
+
+	case scanProgressMsg:
+		m.scanned = msg.scanned
+		m.found = msg.found
+		return m, nil
+
+	case deviceFoundMsg:
+		m.devices = append(m.devices, msg.device)
+		sort.Slice(m.devices, func(i, j int) bool {
+			return ipToInt(m.devices[i].IP) < ipToInt(m.devices[j].IP)
+		})
+		return m, nil
+
+	case scanCompleteMsg:
+		m.complete = true
+		m.scanning = false
+		m.devices = msg.devices
+		m.duration = msg.duration
+		return m, tea.Quit
+
+	case tea.KeyMsg:
+		if msg.String() == "ctrl+c" || msg.String() == "q" {
+			return m, tea.Quit
+		}
 	}
 
-	fmt.Printf("%-18s  %-20s  %-30s\n", "IP Address", "MAC Address", "Vendor")
-	fmt.Printf("%s\n", strings.Repeat("-", 70))
+	return m, nil
+}
 
-	for _, dev := range devices {
+func (m model) View() string {
+	return m.renderScanning()
+}
+
+func (m model) renderScanning() string {
+	var b strings.Builder
+
+	// Title
+	title := titleStyle.Render("⚡ ARP NETWORK SCANNER")
+	b.WriteString(title)
+	b.WriteString("\n\n")
+
+	// Info box
+	infoContent := strings.Builder{}
+	infoContent.WriteString(infoLabelStyle.Render("Interface:") + "  " + infoValueStyle.Render(m.ifaceName) + "\n")
+	infoContent.WriteString(infoLabelStyle.Render("Local IP:") + "  " + infoValueStyle.Render(m.localIP) + "\n")
+	infoContent.WriteString(infoLabelStyle.Render("Subnet:") + "  " + infoValueStyle.Render(m.subnet) + "\n")
+	infoContent.WriteString(infoLabelStyle.Render("Target IPs:") + "  " + infoValueStyle.Render(fmt.Sprintf("%d", m.totalIPs)))
+
+	b.WriteString(infoBoxStyle.Render(infoContent.String()))
+	b.WriteString("\n\n")
+
+	status := statusScanningStyle.Render("● SCANNING")
+	b.WriteString(status)
+	b.WriteString("\n\n")
+
+	progress := m.renderProgressBar()
+	b.WriteString(progress)
+	b.WriteString("\n\n")
+
+	statsText := fmt.Sprintf("Scanned: %d/%d IPs  •  Devices Found: %d", m.scanned, m.totalIPs, m.found)
+	stats := progressTextStyle.Render(statsText)
+	b.WriteString(stats)
+	b.WriteString("\n\n")
+
+	if len(m.devices) > 0 {
+		b.WriteString(headerStyle.Render(" DISCOVERED DEVICES "))
+		b.WriteString("\n\n")
+		table := m.renderDeviceTable()
+		b.WriteString(table)
+		b.WriteString("\n")
+	}
+
+	footer := footerStyle.Render("Press Ctrl+C or q to quit")
+	b.WriteString("\n")
+	b.WriteString(footer)
+
+	return b.String()
+}
+
+func (m model) renderProgressBar() string {
+	width := 50
+	if m.totalIPs == 0 {
+		return ""
+	}
+
+	percent := float64(m.scanned) / float64(m.totalIPs)
+	filled := int(percent * float64(width))
+
+	bar := strings.Builder{}
+	bar.WriteString("[")
+
+	for i := range width {
+		if i < filled {
+			bar.WriteString(progressBarStyle.Render("█"))
+		} else {
+			bar.WriteString(lipgloss.NewStyle().Foreground(mutedColor).Render("░"))
+		}
+	}
+
+	bar.WriteString("]")
+
+	percentText := fmt.Sprintf(" %.1f%%", percent*100)
+	bar.WriteString(progressBarStyle.Render(percentText))
+
+	return bar.String()
+}
+
+func (m model) renderDeviceTable() string {
+	if len(m.devices) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+
+	ipHeader := tableHeaderStyle.Width(18).Render("IP Address")
+	macHeader := tableHeaderStyle.Width(20).Render("MAC Address")
+	vendorHeader := tableHeaderStyle.Width(35).Render("Vendor")
+
+	b.WriteString(ipHeader)
+	b.WriteString(macHeader)
+	b.WriteString(vendorHeader)
+	b.WriteString("\n")
+
+	maxRows := 15
+	displayDevices := m.devices
+	if len(displayDevices) > maxRows {
+		displayDevices = displayDevices[len(displayDevices)-maxRows:]
+	}
+
+	for i, dev := range displayDevices {
 		vendor := dev.Vendor
 		if vendor == "" {
 			vendor = "Unknown"
 		}
-		fmt.Printf("%-18s  %-20s  %-30s\n", dev.IP, dev.MAC, vendor)
+
+		var ipCell, macCell, vendorCell string
+		if i%2 == 0 {
+			ipCell = tableRowAltStyle.Width(18).Render(dev.IP)
+			macCell = tableRowAltStyle.Width(20).Render(dev.MAC)
+			vendorCell = tableRowAltStyle.Width(35).Render(vendor)
+		} else {
+			ipCell = tableCellStyle.Width(18).Render(dev.IP)
+			macCell = tableCellStyle.Width(20).Render(dev.MAC)
+			vendorCell = tableCellStyle.Width(35).Render(vendor)
+		}
+
+		b.WriteString(ipCell)
+		b.WriteString(macCell)
+		b.WriteString(vendorCell)
+		b.WriteString("\n")
 	}
-	fmt.Printf("\n")
+
+	if len(m.devices) > maxRows {
+		more := lipgloss.NewStyle().
+			Foreground(mutedColor).
+			Italic(true).
+			Render(fmt.Sprintf("... and %d more devices", len(m.devices)-maxRows))
+		b.WriteString("\n")
+		b.WriteString(more)
+	}
+
+	return b.String()
 }
 
 func main() {
@@ -289,12 +568,6 @@ func main() {
 		log.Fatalf("Failed to get IP/subnet from interface: %v", err)
 	}
 
-	fmt.Printf("ARP Network Scanner\n")
-	fmt.Printf("==================\n")
-	fmt.Printf("Interface: %s\n", ifaceName)
-	fmt.Printf("Local IP: %s\n", localIP.String())
-	fmt.Printf("Subnet: %s\n\n", subnet)
-
 	iface, err := ethernet.OpenInterface(ifaceName)
 	if err != nil {
 		log.Fatalf("Failed to open interface: %v", err)
@@ -309,17 +582,38 @@ func main() {
 	defer cancel()
 
 	go handler.Start(ctx)
-
 	time.Sleep(100 * time.Millisecond)
 
-	sc := newScanner(handler)
-	startTime := time.Now()
-
-	devices, err := sc.scan(ctx, subnet)
+	// Calculate total IPs
+	tempScanner := &scanner{devices: make(map[string]scannedDevice)}
+	ips, err := tempScanner.generateIPAddresses(subnet)
 	if err != nil {
-		log.Fatalf("Scan failed: %v", err)
+		log.Fatalf("Failed to generate IP addresses: %v", err)
 	}
 
-	duration := time.Since(startTime)
-	printResults(devices, duration)
+	m := model{
+		ifaceName: ifaceName,
+		localIP:   localIP.String(),
+		subnet:    subnet,
+		totalIPs:  len(ips),
+		scanning:  true,
+		devices:   []scannedDevice{},
+	}
+
+	p := tea.NewProgram(m, tea.WithAltScreen())
+
+	sc := newScanner(handler, p)
+	sc.total = len(ips)
+	startTime := time.Now()
+
+	go func() {
+		if err := sc.scan(ctx, subnet, startTime); err != nil {
+			log.Printf("Scan failed: %v", err)
+			p.Quit()
+		}
+	}()
+
+	if _, err := p.Run(); err != nil {
+		log.Fatalf("Error running program: %v", err)
+	}
 }
