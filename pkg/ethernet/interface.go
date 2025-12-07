@@ -82,6 +82,8 @@ func (i *Interface) MACAddress() commons.MACAddress {
 	return i.macAddr
 }
 
+// ReadFrame reads a single Ethernet frame from the network interface.
+// It returns the parsed Frame or an error if reading or parsing fails.
 func (i *Interface) ReadFrame() (*Frame, error) {
 	buf := make([]byte, MaxFrameSize)
 
@@ -97,6 +99,29 @@ func (i *Interface) ReadFrame() (*Frame, error) {
 	}
 
 	return frame, nil
+}
+
+// WriteFrame writes an Ethernet frame to the network interface.
+// It returns an error if serialization or sending fails.
+func (i *Interface) WriteFrame(frame *Frame) error {
+	var buf bytes.Buffer
+	if err := frame.Serialize(&buf); err != nil {
+		return fmt.Errorf("failed to serialize frame: %w", err)
+	}
+
+	addr := &unix.SockaddrLinklayer{
+		Ifindex:  i.index,
+		Protocol: htons(uint16(frame.EtherType)),
+		Halen:    6,
+	}
+
+	copy(addr.Addr[:], frame.Destination[:])
+
+	if err := unix.Sendto(i.fileDesc, buf.Bytes(), 0, addr); err != nil {
+		return fmt.Errorf("failed to send frame: %w", err)
+	}
+
+	return nil
 }
 
 // htons converts a 16-bit integer from host byte order to network byte order (big endian).
