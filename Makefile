@@ -113,21 +113,23 @@ run-capture: build ## Run the packet capture example (requires sudo). Use ARGS f
 	@echo "$(COLOR_YELLOW)Note: This requires root privileges$(COLOR_RESET)"
 	@sudo $(BINARY_DIR)/capture $(ARGS)
 
-run-arp: build ## Run the ARP network scanner (requires sudo). Usage: make run-arp IFACE=eth0 LOCAL_IP=192.168.1.100
+run-arp: build ## Run the ARP network scanner (requires sudo). Usage: make run-arp IFACE=eth0
 	@echo "$(COLOR_GREEN)Running ARP Network Scanner...$(COLOR_RESET)"
 	@echo "$(COLOR_YELLOW)Note: This requires root privileges$(COLOR_RESET)"
-	@if [ -z "$(IFACE)" ] || [ -z "$(LOCAL_IP)" ]; then \
-		echo "$(COLOR_YELLOW)Usage: make run-arp IFACE=<interface> LOCAL_IP=<your-ip>$(COLOR_RESET)"; \
-		echo "$(COLOR_YELLOW)Example: make run-arp IFACE=eth0 LOCAL_IP=192.168.1.100$(COLOR_RESET)"; \
+	@if [ -z "$(IFACE)" ]; then \
+		echo "$(COLOR_YELLOW)Usage: make run-arp IFACE=<interface>$(COLOR_RESET)"; \
+		echo "$(COLOR_YELLOW)Example: make run-arp IFACE=eth0$(COLOR_RESET)"; \
 		echo ""; \
-		echo "Find your network info with:"; \
+		echo "The scanner will automatically detect your IP and subnet from the interface."; \
+		echo ""; \
+		echo "Find your network interfaces with:"; \
 		echo "  - List interfaces: ip addr show"; \
-		echo "  - Show your IP: ip addr show <interface>"; \
+		echo "  - Brief list: ip -brief addr show"; \
 		exit 1; \
 	fi
-	@sudo $(BINARY_DIR)/arp-visualizer $(IFACE) $(LOCAL_IP)
+	@sudo $(BINARY_DIR)/arp-visualizer $(IFACE)
 
-run-arp-demo: build ## Run ARP scanner demo (interactive - will prompt for network info)
+run-arp-demo: build ## Run ARP scanner demo (interactive - will prompt for network interface)
 	@echo "$(COLOR_GREEN)ARP Network Scanner - Interactive Setup$(COLOR_RESET)"
 	@echo ""
 	@echo "$(COLOR_BOLD)Find your network interface:$(COLOR_RESET)"
@@ -135,13 +137,11 @@ run-arp-demo: build ## Run ARP scanner demo (interactive - will prompt for netwo
 	@ip -brief addr show | grep -v "lo" || true
 	@echo ""
 	@read -p "Enter interface name (e.g., eth0, wlan0): " iface; \
-	read -p "Enter your IP address: " local_ip; \
 	echo ""; \
 	echo "$(COLOR_GREEN)Starting ARP Network Scanner...$(COLOR_RESET)"; \
-	echo "$(COLOR_YELLOW)Will scan subnet for $$local_ip on $$iface$(COLOR_RESET)"; \
-	echo "$(COLOR_YELLOW)Press 's' in the app to start scanning!$(COLOR_RESET)"; \
+	echo "$(COLOR_YELLOW)Auto-detecting IP and subnet from $$iface...$(COLOR_RESET)"; \
 	echo ""; \
-	sudo $(BINARY_DIR)/arp-visualizer $$iface $$local_ip
+	sudo $(BINARY_DIR)/arp-visualizer $$iface
 
 install: ## Install binaries to GOPATH/bin
 	@echo "$(COLOR_GREEN)Installing binaries...$(COLOR_RESET)"
