@@ -142,15 +142,27 @@ func (p *Packet) IsReply() bool {
 // NewRequest creates a new ARP request packet.
 // This is used to ask "who has targetIP? Tell senderIP".
 func NewRequest(senderMAC commons.MACAddress, senderIP, targetIP commons.IPv4Address) *Packet {
+	return newBasePacket(senderMAC, commons.UnknownMAC, senderIP, targetIP, OperationRequest)
+}
+
+// NewReply creates a new ARP reply packet.
+// This is used to respond "targetIP is at targetMAC".
+func NewReply(senderMAC, targetMAC commons.MACAddress, senderIP, targetIP commons.IPv4Address) *Packet {
+	return newBasePacket(senderMAC, targetMAC, senderIP, targetIP, OperationReply)
+}
+
+// newBasePacket is a helper to create a base ARP packet with common fields.
+// It sets the hardware/protocol types and lengths.
+func newBasePacket(senderMAC, targetMAC commons.MACAddress, senderIP, targetIP commons.IPv4Address, op Operation) *Packet {
 	return &Packet{
 		HardwareType:   HardwareTypeEthernet,
 		ProtocolType:   ProtocolTypeIPv4,
-		HardwareLength: 6,
-		ProtocolLength: 4,
-		Operation:      OperationRequest,
+		HardwareLength: commons.MACLength,
+		ProtocolLength: commons.IPv4Length,
+		Operation:      op,
 		SenderMAC:      senderMAC,
 		SenderIP:       senderIP,
-		TargetMAC:      commons.MACAddress{}, // Unknown (00:00:00:00:00:00)
+		TargetMAC:      targetMAC,
 		TargetIP:       targetIP,
 	}
 }
