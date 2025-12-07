@@ -148,7 +148,9 @@ func (h *Handler) Start(ctx context.Context) {
 					continue
 				}
 
-				h.handlePacket(packet)
+				if err := h.handlePacket(packet); err != nil {
+					log.Printf("ARP handler: failed to handle ARP packet: %v", err)
+				}
 			}
 		}
 	}()
