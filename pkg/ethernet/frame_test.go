@@ -83,14 +83,14 @@ func TestSerialize(t *testing.T) {
 	}
 
 	// Check destination MAC
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		if data[i] != dst[i] {
 			t.Errorf("Destination byte %d = 0x%02X, want 0x%02X", i, data[i], dst[i])
 		}
 	}
 
 	// Check source MAC
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		if data[6+i] != src[i] {
 			t.Errorf("Source byte %d = 0x%02X, want 0x%02X", i, data[6+i], src[i])
 		}
@@ -102,7 +102,7 @@ func TestSerialize(t *testing.T) {
 	}
 
 	// Check payload
-	for i := 0; i < len(payload); i++ {
+	for i := range payload {
 		if data[HeaderSize+i] != payload[i] {
 			t.Errorf("Payload byte %d = 0x%02X, want 0x%02X", i, data[HeaderSize+i], payload[i])
 		}

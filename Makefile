@@ -1,7 +1,7 @@
 # Makefile for Go Network Protocol Implementation
 # Module: github.com/utkarsh5026/net
 
-.PHONY: help all build test test-verbose test-coverage clean fmt fmt-check vet lint tidy deps bench install-tools examples
+.PHONY: help all build test test-verbose test-coverage clean fmt fmt-check vet lint modernize tidy deps bench install-tools examples run-capture
 
 # Default target
 .DEFAULT_GOAL := help
@@ -64,6 +64,10 @@ lint: ## Run golangci-lint (requires golangci-lint installation)
 		echo "$(COLOR_YELLOW)golangci-lint not installed. Run 'make install-tools' to install it.$(COLOR_RESET)"; \
 	fi
 
+modernize: ## Modernize Go code using gopls modernize analyzer
+	@echo "$(COLOR_GREEN)Running modernize...$(COLOR_RESET)"
+	@$(GOCMD) run golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize@latest -fix -test ./...
+
 ##@ Testing
 
 test: ## Run all tests
@@ -100,6 +104,13 @@ build: ## Build all example binaries
 build-all: build ## Build all binaries (alias for build)
 
 examples: build ## Build example programs
+
+##@ Examples
+
+run-capture: build ## Run the packet capture example (requires sudo). Use ARGS for flags (e.g., ARGS="-i eth0 -c 10")
+	@echo "$(COLOR_GREEN)Running capture example...$(COLOR_RESET)"
+	@echo "$(COLOR_YELLOW)Note: This requires root privileges$(COLOR_RESET)"
+	@sudo $(BINARY_DIR)/capture $(ARGS)
 
 install: ## Install binaries to GOPATH/bin
 	@echo "$(COLOR_GREEN)Installing binaries...$(COLOR_RESET)"
