@@ -32,14 +32,16 @@ import (
 	"github.com/utkarsh5026/net/pkg/ethernet"
 )
 
-// scannedDevice represents a discovered device on the network
+// scannedDevice represents a discovered device on the network.
+// It contains the IP address, MAC address, and vendor information
+// of a device that responded to an ARP request.
 type scannedDevice struct {
-	IP     string
-	MAC    string
-	Vendor string
+	IP, MAC, Vendor string
 }
 
-// scanner manages the ARP scanning process
+// scanner manages the ARP scanning process and coordinates concurrent
+// scanning of multiple IP addresses. It maintains statistics about the
+// scan progress and collects information about discovered devices.
 type scanner struct {
 	handler *arp.Handler
 	scanned int64
@@ -48,6 +50,7 @@ type scanner struct {
 	devices map[string]scannedDevice
 }
 
+// newScanner creates and initializes a new scanner instance with the given ARP handler.
 func newScanner(handler *arp.Handler) *scanner {
 	return &scanner{
 		handler: handler,
@@ -55,6 +58,10 @@ func newScanner(handler *arp.Handler) *scanner {
 	}
 }
 
+// generateIPAddresses generates a list of all valid host IP addresses within the given subnet.
+// It excludes the network address (first IP) and broadcast address (last IP).
+//
+//	For subnet "192.168.1.0/24", generates IPs from 192.168.1.1 to 192.168.1.254
 func (s *scanner) generateIPAddresses(subnet string) ([]commons.IPv4Address, error) {
 	baseIP, ipNet, err := net.ParseCIDR(subnet)
 	if err != nil {
@@ -64,7 +71,7 @@ func (s *scanner) generateIPAddresses(subnet string) ([]commons.IPv4Address, err
 	var ips []commons.IPv4Address
 	for ip := baseIP.Mask(ipNet.Mask); ipNet.Contains(ip); incIP(ip) {
 		if ip[3] == 0 || ip[3] == 255 {
-			continue // Skip network and broadcast
+			continue
 		}
 
 		var ipv4 commons.IPv4Address
@@ -74,6 +81,7 @@ func (s *scanner) generateIPAddresses(subnet string) ([]commons.IPv4Address, err
 	return ips, nil
 }
 
+// scan performs a concurrent ARP scan of all valid IPs in the specified subnet.
 func (s *scanner) scan(ctx context.Context, subnet string) ([]scannedDevice, error) {
 	ips, err := s.generateIPAddresses(subnet)
 	if err != nil {
@@ -126,6 +134,7 @@ func (s *scanner) scan(ctx context.Context, subnet string) ([]scannedDevice, err
 	return s.getSortedDevices(), nil
 }
 
+// addDevice safely adds a discovered device to the scanner's device map.
 func (s *scanner) addDevice(ip commons.IPv4Address, mac commons.MACAddress) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -138,6 +147,8 @@ func (s *scanner) addDevice(ip commons.IPv4Address, mac commons.MACAddress) {
 	}
 }
 
+// getSortedDevices returns all discovered devices sorted by IP address.
+// The devices are sorted in ascending order by their numeric IP value.
 func (s *scanner) getSortedDevices() []scannedDevice {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -154,6 +165,8 @@ func (s *scanner) getSortedDevices() []scannedDevice {
 	return devices
 }
 
+// reportProgress continuously prints scan progress updates to stdout.
+// It updates every 500ms showing the number of IPs scanned and devices found.
 func (s *scanner) reportProgress(done chan struct{}) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -172,6 +185,13 @@ func (s *scanner) reportProgress(done chan struct{}) {
 	}
 }
 
+// incIP increments an IP address by one in-place.
+// It treats the IP address as a big-endian integer and adds 1,
+// handling carry-over between octets.
+// Example:
+//
+//	192.168.1.1 becomes 192.168.1.2
+//	192.168.1.255 becomes 192.168.2.0
 func incIP(ip net.IP) {
 	for j := len(ip) - 1; j >= 0; j-- {
 		ip[j]++
@@ -181,6 +201,10 @@ func incIP(ip net.IP) {
 	}
 }
 
+// ipToInt converts an IPv4 address string to its 32-bit integer representation.
+// This is useful for sorting IP addresses numerically.
+//
+//	"192.168.1.1" returns 3232235777 (0xC0A80101)
 func ipToInt(ip string) uint32 {
 	parts := strings.Split(ip, ".")
 	if len(parts) != 4 {
@@ -191,6 +215,36 @@ func ipToInt(ip string) uint32 {
 	return (a << 24) | (b << 16) | (c << 8) | d
 }
 
+// getInterfaceIPv4AndSubnet retrieves the first IPv4 address and its CIDR subnet from a network interface.
+// This is used to automatically determine the local IP and subnet to scan.
+func getInterfaceIPv4AndSubnet(ifaceName string) (commons.IPv4Address, string, error) {
+	var zero commons.IPv4Address
+	iface, err := net.InterfaceByName(ifaceName)
+	if err != nil {
+		return zero, "", fmt.Errorf("failed to get interface %s: %w", ifaceName, err)
+	}
+
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return zero, "", fmt.Errorf("failed to get addresses for %s: %w", ifaceName, err)
+	}
+
+	for _, addr := range addrs {
+		if ipNet, ok := addr.(*net.IPNet); ok {
+			if ipv4 := ipNet.IP.To4(); ipv4 != nil {
+				var localIP commons.IPv4Address
+				copy(localIP[:], ipv4)
+
+				subnet := ipNet.String()
+				return localIP, subnet, nil
+			}
+		}
+	}
+
+	return commons.IPv4Address{}, "", fmt.Errorf("no IPv4 address found on interface %s", ifaceName)
+}
+
+// printResults displays a formatted summary of the scan results.
 func printResults(devices []scannedDevice, duration time.Duration) {
 	fmt.Printf("\n\n")
 	fmt.Printf("========================================\n")
@@ -218,35 +272,27 @@ func printResults(devices []scannedDevice, duration time.Duration) {
 }
 
 func main() {
-	if len(os.Args) < 3 {
+	if len(os.Args) < 2 {
 		fmt.Fprintf(os.Stderr, "ARP Network Scanner - Discover devices on your local network\n\n")
-		fmt.Fprintf(os.Stderr, "Usage: %s <interface> <local-ip>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: %s <interface>\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "\nExample:\n")
-		fmt.Fprintf(os.Stderr, "  sudo %s eth0 192.168.1.100\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "\nThe scanner will automatically detect your subnet (e.g., 192.168.1.0/24)\n")
-		fmt.Fprintf(os.Stderr, "and scan all IPs in that range.\n\n")
+		fmt.Fprintf(os.Stderr, "  sudo %s eth0\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "\nThe scanner will automatically detect your IP address and subnet\n")
+		fmt.Fprintf(os.Stderr, "from the interface and scan all IPs in that range.\n\n")
 		fmt.Fprintf(os.Stderr, "Note: This program requires root/sudo privileges.\n")
 		os.Exit(1)
 	}
 
 	ifaceName := os.Args[1]
-	localIPStr := os.Args[2]
-
-	localIP, err := commons.ParseIPv4(localIPStr)
+	localIP, subnet, err := getInterfaceIPv4AndSubnet(ifaceName)
 	if err != nil {
-		log.Fatalf("Invalid local IP address: %v", err)
+		log.Fatalf("Failed to get IP/subnet from interface: %v", err)
 	}
-
-	parts := strings.Split(localIPStr, ".")
-	if len(parts) != 4 {
-		log.Fatalf("Invalid IP address format")
-	}
-	subnet := fmt.Sprintf("%s.%s.%s.0/24", parts[0], parts[1], parts[2])
 
 	fmt.Printf("ARP Network Scanner\n")
 	fmt.Printf("==================\n")
 	fmt.Printf("Interface: %s\n", ifaceName)
-	fmt.Printf("Local IP: %s\n", localIPStr)
+	fmt.Printf("Local IP: %s\n", localIP.String())
 	fmt.Printf("Subnet: %s\n\n", subnet)
 
 	iface, err := ethernet.OpenInterface(ifaceName)
